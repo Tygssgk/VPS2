@@ -1,4 +1,3 @@
-
 name: RDP
 
 on:
@@ -7,59 +6,218 @@ on:
 jobs:
   secure-rdp:
     runs-on: windows-2025
-    timeout-minutes: 3600
+    timeout-minutes: 360
 
     steps:
+      # ============================================
+      # STEP 1: Konfigurasi RDP
+      # ============================================
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
 
-          # Require Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "UserAuthentication" -Value 1 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "SecurityLayer" -Value 1 -Force
 
-          # Firewall rule for RDP
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
 
           Restart-Service -Name TermService -Force
-      
+
       - name: Configure runneradmin for RDP
         run: |
           $username = "runneradmin"
-          $password = "P@ssw0rd123!"  # ⚠️ Change this or use a GitHub secret
+          $password = "P@ssw0rd123!"  # ⚠️ Ganti ini atau gunakan GitHub Secret
 
-          # Enable account (in case it’s disabled)
           Enable-LocalUser -Name $username
-
-          # Set password
           Set-LocalUser -Name $username -Password (ConvertTo-SecureString -AsPlainText $password -Force)
-
-          # Ensure account has Administrator rights
           Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
 
-          # Export credentials to env vars
           echo "RDP_USER=$username" >> $env:GITHUB_ENV
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
+      # ============================================
+      # STEP 2: Install Python Versi Terbaru
+      # ============================================
+      - name: Install Python Latest Version
+        run: |
+          Write-Host "========================================="
+          Write-Host "  Installing Python Latest Version..."
+          Write-Host "========================================="
+
+          # Download Python 3.13 installer dari python.org
+          $pythonUrl = "https://www.python.org/ftp/python/3.13.4/python-3.13.4-amd64.exe"
+          $installerPath = "$env:TEMP\python-installer.exe"
+
+          Write-Host "Downloading Python installer..."
+          Invoke-WebRequest -Uri $pythonUrl -OutFile $installerPath -UseBasicParsing
+
+          Write-Host "Running Python installer (system-wide)..."
+          Start-Process -FilePath $installerPath -ArgumentList `
+            "/quiet", `
+            "InstallAllUsers=1", `
+            "PrependPath=1", `
+            "Include_pip=1", `
+            "Include_launcher=1", `
+            "Include_test=0" `
+            -Wait -NoNewWindow
+
+          Remove-Item $installerPath -Force
+
+          # Refresh PATH agar Python terdeteksi
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + `
+                      [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+          # Verifikasi instalasi
+          Write-Host "`n--- Verifikasi Python ---"
+          python --version
+          pip --version
+          Write-Host "Python installed successfully!`n"
+
+      # ============================================
+      # STEP 3: Install Visual Studio Code
+      # ============================================
+      - name: Install Visual Studio Code
+        run: |
+          Write-Host "========================================="
+          Write-Host "  Installing Visual Studio Code..."
+          Write-Host "========================================="
+
+          # Download VS Code System Installer (agar tersedia untuk semua user di RDP)
+          $vscodeUrl = "https://update.code.visualstudio.com/latest/win32-x64/stable"
+          $installerPath = "$env:TEMP\vscode-installer.exe"
+
+          Write-Host "Downloading VS Code..."
+          Invoke-WebRequest -Uri $vscodeUrl -OutFile $installerPath -UseBasicParsing
+
+          Write-Host "Running VS Code installer..."
+          Start-Process -FilePath $installerPath -ArgumentList `
+            "/verysilent", `
+            "/norestart", `
+            "/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath,desktopicon" `
+            -Wait -NoNewWindow
+
+          Remove-Item $installerPath -Force
+
+          # Refresh PATH
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + `
+                      [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+          Write-Host "VS Code installed successfully!"
+
+      # ============================================
+      # STEP 4: Install VS Code Extensions (Python & AI)
+      # ============================================
+      - name: Install VS Code Extensions
+        run: |
+          Write-Host "Installing VS Code extensions..."
+
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + `
+                      [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+          $codePath = "${env:ProgramFiles}\Microsoft VS Code\bin\code.cmd"
+
+          if (Test-Path $codePath) {
+              # Python extension
+              & $codePath --install-extension ms-python.python --force 2>$null
+              # Pylance (IntelliSense)
+              & $codePath --install-extension ms-python.vscode-pylance --force 2>$null
+              # Google Cloud Code (termasuk Gemini AI assistant)
+              & $codePath --install-extension GoogleCloudTools.cloudcode --force 2>$null
+              # Jupyter Notebooks
+              & $codePath --install-extension ms-toolsai.jupyter --force 2>$null
+
+              Write-Host "VS Code extensions installed!"
+          } else {
+              Write-Host "WARNING: VS Code CLI not found at expected path, skipping extensions"
+          }
+
+      # ============================================
+      # STEP 5: Install Google Generative AI SDK
+      # ============================================
+      - name: Install Google Generative AI SDK (Antigravity AI)
+        run: |
+          Write-Host "========================================="
+          Write-Host "  Installing Google AI Packages..."
+          Write-Host "========================================="
+
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + `
+                      [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+          Write-Host "Upgrading pip..."
+          python -m pip install --upgrade pip
+
+          Write-Host "`nInstalling Google Generative AI SDK (Gemini)..."
+          pip install --upgrade google-generativeai
+
+          Write-Host "`nInstalling Google Cloud AI Platform..."
+          pip install --upgrade google-cloud-aiplatform
+
+          Write-Host "`nInstalling additional useful AI packages..."
+          pip install --upgrade google-auth google-api-python-client
+
+          # Verifikasi
+          Write-Host "`n--- Verifikasi Google AI SDK ---"
+          python -c "import google.generativeai as genai; print('google-generativeai version:', genai.__version__)"
+          Write-Host "Google AI SDK installed successfully!`n"
+
+          # Buat sample script di Desktop agar mudah diakses via RDP
+          $sampleScript = @"
+          # ============================================
+          # Google Gemini AI - Sample Script
+          # ============================================
+          # Jalankan: python gemini_sample.py
+          #
+          # Set API key Anda terlebih dahulu:
+          #   set GOOGLE_API_KEY=your-api-key-here
+          #
+          # Dapatkan API key gratis di:
+          #   https://aistudio.google.com/apikey
+          # ============================================
+
+          import google.generativeai as genai
+          import os
+
+          api_key = os.environ.get("GOOGLE_API_KEY", "YOUR_API_KEY_HERE")
+          genai.configure(api_key=api_key)
+
+          model = genai.GenerativeModel("gemini-2.0-flash")
+          response = model.generate_content("Jelaskan apa itu AI dalam 3 kalimat bahasa Indonesia.")
+          print(response.text)
+          "@
+
+          $desktopPath = "C:\Users\Public\Desktop"
+          $sampleScript | Out-File -FilePath "$desktopPath\gemini_sample.py" -Encoding UTF8
+          Write-Host "Sample script saved to $desktopPath\gemini_sample.py"
+
+      # ============================================
+      # STEP 6: Install Tailscale & Connect
+      # ============================================
       - name: Install Tailscale
         run: |
+          Write-Host "========================================="
+          Write-Host "  Installing Tailscale..."
+          Write-Host "========================================="
+
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
-          
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath -UseBasicParsing
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
 
+          Write-Host "Tailscale installed successfully!"
+
       - name: Establish Tailscale Connection
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=gh-runner-$env:GITHUB_RUN_ID
+
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
@@ -67,13 +225,16 @@ jobs:
               Start-Sleep -Seconds 5
               $retries++
           }
-          
+
           if (-not $tsIP) {
               Write-Error "Tailscale IP not assigned. Exiting."
               exit 1
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
+
+      # ============================================
+      # STEP 7: Verifikasi & Jalankan
+      # ============================================
       - name: Verify RDP Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
@@ -86,12 +247,31 @@ jobs:
 
       - name: Maintain Connection
         run: |
-          Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: $env:RDP_USER"
-          Write-Host "Password: $env:RDP_PASS"
-          Write-Host "==================`n"
-          
+          Write-Host ""
+          Write-Host "============================================================"
+          Write-Host "                    RDP ACCESS READY"
+          Write-Host "============================================================"
+          Write-Host ""
+          Write-Host "  Connection Info:"
+          Write-Host "    Address  : $env:TAILSCALE_IP"
+          Write-Host "    Username : $env:RDP_USER"
+          Write-Host "    Password : $env:RDP_PASS"
+          Write-Host ""
+          Write-Host "  Installed Software:"
+          Write-Host "    [OK] Python 3.13 (latest)"
+          Write-Host "    [OK] Visual Studio Code + Extensions"
+          Write-Host "    [OK] Google Generative AI SDK (Gemini)"
+          Write-Host "    [OK] Google Cloud AI Platform SDK"
+          Write-Host "    [OK] Tailscale VPN"
+          Write-Host ""
+          Write-Host "  Quick Start:"
+          Write-Host "    - Buka VS Code dari Desktop atau Start Menu"
+          Write-Host "    - Sample script Gemini ada di Desktop"
+          Write-Host "    - Set API key: set GOOGLE_API_KEY=xxx"
+          Write-Host ""
+          Write-Host "============================================================"
+          Write-Host ""
+
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
               Start-Sleep -Seconds 300
